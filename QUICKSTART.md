@@ -66,7 +66,6 @@ cd src
 python manage.py migrate
 
 # Создайте тестовые данные
-python setup_db.py
 ```
 
 ### 5. Запуск сервера
