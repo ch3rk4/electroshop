@@ -6,13 +6,46 @@ middleware, приложений, статических файлов и без�
 """
 
 import os
+import importlib
+import importlib.util
+
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения из .env файла
 # Это позволяет хранить чувствительные данные отдельно от кода
-load_dotenv()
+if os.name == "nt":
+    for locale_var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        os.environ.setdefault(locale_var, "C")
+
+load_dotenv(encoding="utf-8-sig")
+
+# На Windows при работе с PostgreSQL через psycopg2 может возникать ошибка
+# UnicodeDecodeError, если переменные окружения с учетными данными содержат
+# символы вне ASCII, а клиентская кодировка не задана. Явно указываем
+# PostgreSQL, что клиент ожидает UTF-8, чтобы libpq корректно обрабатывал
+# такие значения и сообщения об ошибках.
+os.environ.setdefault("PGCLIENTENCODING", "UTF8")
+
+
+def _normalize_env_value(value: str) -> str:
+    """Удаляет невидимые символы, которые часто появляются при копировании."""
+
+    # Стандартные методы вроде str.strip() не всегда убирают zero-width
+    # символы или BOM. Они часто встречаются в .env файлах, которые редактируют
+    # в текстовых редакторах Windows.
+    junk_chars = {"\ufeff", "\u200b", "\u200e", "\u200f", "\u00a0"}
+    for junk in junk_chars:
+        value = value.replace(junk, "")
+    return value.strip()
+
+
+def get_env_setting(name: str, default: str = "") -> str:
+    """Возвращает очищенное строковое значение переменной окружения."""
+
+    raw_value = os.getenv(name, default)
+    return _normalize_env_value(raw_value if raw_value is not None else default)
 
 # Определяем базовую директорию проекта
 # Path(__file__).resolve() получает полный путь к текущему файлу
@@ -106,14 +139,34 @@ WSGI_APPLICATION = 'electronics_network.wsgi.application'
 
 # Настройки подключения к PostgreSQL
 # Используем переменные окружения для гибкости и безопасности
+_db_engine = get_env_setting('DB_ENGINE', 'django.db.backends.postgresql')
+_db_options = {}
+
+if _db_engine.endswith('postgresql'):
+    # Обеспечиваем использование UTF-8 даже если сервер настроен иначе и
+    # принудительно переключаем локаль сообщений на "C", чтобы libpq
+    # возвращал ASCII-сообщения. На Windows PostgreSQL по умолчанию может
+    # использовать локаль `Russian_Russia.1251`, и при попытке декодировать
+    # сообщения об ошибках в UTF-8 psycopg2 выбрасывает UnicodeDecodeError.
+    # Передавая lc_messages=C, мы получаем только ASCII-символы и избегаем
+    # подобных сбоев, даже когда соединение не удается установить.
+    forced_options = "-c client_encoding=UTF8 -c lc_messages=C"
+
+    existing_options = os.getenv('PGOPTIONS', '').strip()
+    if existing_options:
+        forced_options = f"{existing_options} {forced_options}"
+
+    _db_options['options'] = forced_options
+
 DATABASES = {
     'default': {
-        'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.postgresql'),
-        'NAME': os.getenv('DB_NAME', 'electronics_network_db'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
+        'ENGINE': _db_engine,
+        'NAME': get_env_setting('DB_NAME', 'electronics_network_db'),
+        'USER': get_env_setting('DB_USER', 'postgres'),
+        'PASSWORD': get_env_setting('DB_PASSWORD', ''),
+        'HOST': get_env_setting('DB_HOST', 'localhost'),
+        'PORT': get_env_setting('DB_PORT', '5432'),
+        'OPTIONS': _db_options,
     }
 }
 

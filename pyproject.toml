@@ -7,8 +7,10 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.13"
+django-filter = "^24.3"
 drf-yasg = "^1.21.11"
 pytest = "^8.4.2"
+dotenv = "^0.9.9"
 
 
 [build-system]
